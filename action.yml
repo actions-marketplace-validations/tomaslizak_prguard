@@ -1,0 +1,24 @@
+name: 'PRGuard — Anti-Slop PR & Bounty Triage'
+description: 'Clusters competing PRs by issue, detects duplicate AI/bot slop, verifies test coverage & CI status, and ranks the best merge candidate.'
+author: 'tomaslizak'
+branding:
+  icon: 'shield'
+  color: 'blue'
+inputs:
+  github-token:
+    description: 'GitHub Token used to query open PRs and post triage reports'
+    required: true
+  limit:
+    description: 'Maximum open PRs to scan'
+    required: false
+    default: '40'
+runs:
+  using: 'composite'
+  steps:
+    - name: Run PRGuard Scan
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        npx --yes prguard scan "${{ github.repository }}" --limit "${{ inputs.limit }}" --output prguard_report.md
+        cat prguard_report.md >> "$GITHUB_STEP_SUMMARY"
