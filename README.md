@@ -64,11 +64,11 @@ jobs:
 
 ---
 
-## 💼 Maintainer Pro & Organization Plans
+## 💼 Maintainer Pro Plans (Powered by Polar.sh)
 
 - **Community (Free Forever):** Full open-source CLI & GitHub Action summary reports.
-- **Maintainer Pro ($19/mo):** Automated PR bot comments, auto-labeling (`likely-slop`, `top-contender`), deep AST patch-clone inspection, and priority support.
-- **Org Unlimited ($49/mo):** Organization-wide webhook deployment, Slack/Discord alerts, and custom security rulesets.
+- **Maintainer Pro ($19/mo or $190/yr):** Sticky ranked triage comments on contested issues (`--comment`), automatic PR verdict labeling (`--label`: `prguard: top-contender`, `prguard: needs-scrutiny`, `prguard: likely-slop`), and Slack/Discord webhook alerts (`--webhook`).
+- **Get Instant License Key:** [Buy via Polar.sh Checkout](https://buy.polar.sh/polar_cl_Dx0gfwQa9dlI4lWMAwFANsUaFQQk6STAWCVSC2O5wSL) (`PRGUARD-*` license key issued immediately upon checkout; validate locally with `prguard license <KEY>`).
 
 ---
 

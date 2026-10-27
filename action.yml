@@ -1,24 +1,60 @@
 name: 'PRGuard — Anti-Slop PR & Bounty Triage'
-description: 'Clusters competing PRs by issue, detects duplicate AI/bot slop, verifies test coverage & CI status, and ranks the best merge candidate.'
+description: 'Clusters competing PRs by issue, flags duplicate AI/bot slop, checks tests & CI, and ranks the best merge candidate.'
 author: 'tomaslizak'
 branding:
   icon: 'shield'
   color: 'blue'
 inputs:
   github-token:
-    description: 'GitHub Token used to query open PRs and post triage reports'
+    description: 'Token used to read PRs (and, for Pro features, write comments/labels)'
     required: true
   limit:
     description: 'Maximum open PRs to scan'
     required: false
     default: '40'
+  license-key:
+    description: 'PRGuard Pro license key (store it as a secret). Required for comment/label/webhook.'
+    required: false
+    default: ''
+  comment:
+    description: 'Pro: post/update one ranked triage comment on each contested issue'
+    required: false
+    default: 'false'
+  label:
+    description: 'Pro: label PRs prguard: top-contender / needs-scrutiny / likely-slop'
+    required: false
+    default: 'false'
+  webhook-url:
+    description: 'Pro: Slack or Discord incoming webhook URL for a summary (store it as a secret)'
+    required: false
+    default: ''
 runs:
   using: 'composite'
   steps:
-    - name: Run PRGuard Scan
+    - name: Install PRGuard runtime dependencies
+      shell: bash
+      run: npm ci --omit=dev --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH" >/dev/null
+    - name: Run PRGuard scan
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        PRGUARD_LICENSE_KEY: ${{ inputs.license-key }}
+        PRGUARD_LIMIT: ${{ inputs.limit }}
+        PRGUARD_COMMENT: ${{ inputs.comment }}
+        PRGUARD_LABEL: ${{ inputs.label }}
+        PRGUARD_WEBHOOK: ${{ inputs.webhook-url }}
       run: |
-        npx --yes prguard scan "${{ github.repository }}" --limit "${{ inputs.limit }}" --output prguard_report.md
+        args=(scan "$GITHUB_REPOSITORY" --limit "$PRGUARD_LIMIT" --output prguard_report.md)
+        [ "$PRGUARD_COMMENT" = "true" ] && args+=(--comment)
+        [ "$PRGUARD_LABEL" = "true" ] && args+=(--label)
+        [ -n "$PRGUARD_WEBHOOK" ] && args+=(--webhook "$PRGUARD_WEBHOOK")
+        set +e
+        node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}"
+        status=$?
+        set -e
         cat prguard_report.md >> "$GITHUB_STEP_SUMMARY"
+        if [ "$status" = "2" ]; then
+          echo "::warning title=PRGuard Pro::Pro features were requested but no active license key was provided. The free report was still generated."
+          exit 0
+        fi
+        exit "$status"

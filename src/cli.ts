@@ -2,6 +2,16 @@
 import { Command } from 'commander';
 import { buildAuditReport, RepoAuditReport, ScoredPR } from './analyzer.js';
 import { fetchOpenPRs } from './github.js';
+import { PRO_PURCHASE_URL, validateLicense } from './license.js';
+import {
+  applyVerdictLabel,
+  ensureLabels,
+  fetchPrLabels,
+  formatClusterComment,
+  formatWebhookText,
+  sendWebhook,
+  upsertStickyComment,
+} from './pro.js';
 import * as fs from 'node:fs';
 
 function verdictBadge(verdict: ScoredPR['verdict']): string {
@@ -67,7 +77,72 @@ const program = new Command();
 program
   .name('prguard')
   .description('Anti-Slop PR Triage, Duplicate Cluster & Bounty Verification Engine')
-  .version('1.0.0');
+  .version('1.1.0');
+
+interface ScanOpts {
+  limit: string;
+  output?: string;
+  json?: string;
+  comment?: boolean;
+  label?: boolean;
+  webhook?: string;
+  licenseKey?: string;
+  dryRun?: boolean;
+}
+
+async function runProActions(repo: string, report: RepoAuditReport, opts: ScanOpts): Promise<number> {
+  const wantsPro = Boolean(opts.comment || opts.label || opts.webhook);
+  if (!wantsPro) return 0;
+
+  const license = await validateLicense(opts.licenseKey ?? process.env.PRGUARD_LICENSE_KEY);
+  if (!license.valid) {
+    console.error(`⚠️  Pro features skipped (--comment / --label / --webhook): ${license.reason}.`);
+    console.error(`   Get a PRGuard Pro license key at ${PRO_PURCHASE_URL}`);
+    return 2;
+  }
+  console.log('🔑 PRGuard Pro license active.');
+
+  const contested = report.clusters.filter(
+    (c): c is typeof c & { issueNumber: number } => c.issueNumber !== 'UNLINKED' && c.totalPRs > 1
+  );
+
+  if (opts.comment) {
+    for (const cluster of contested) {
+      const body = formatClusterComment(repo, cluster);
+      if (opts.dryRun) {
+        console.log(`[dry-run] would upsert triage comment on #${cluster.issueNumber}:\n${body}\n`);
+        continue;
+      }
+      const action = upsertStickyComment(repo, cluster.issueNumber, body);
+      console.log(`💬 Triage comment ${action} on #${cluster.issueNumber}`);
+    }
+  }
+
+  if (opts.label) {
+    if (!opts.dryRun) ensureLabels(repo);
+    for (const cluster of contested) {
+      for (const scored of cluster.rankedPRs) {
+        if (opts.dryRun) {
+          console.log(`[dry-run] #${scored.pr.number} -> ${scored.verdict}`);
+          continue;
+        }
+        const current = fetchPrLabels(repo, scored.pr.number);
+        const applied = applyVerdictLabel(repo, scored, current);
+        if (applied) console.log(`🏷️  #${scored.pr.number} labelled "${applied}"`);
+      }
+    }
+  }
+
+  if (opts.webhook) {
+    if (opts.dryRun) {
+      console.log(`[dry-run] would POST webhook summary:\n${formatWebhookText(report)}`);
+    } else {
+      await sendWebhook(opts.webhook, report);
+      console.log('📣 Webhook summary sent.');
+    }
+  }
+  return 0;
+}
 
 program
   .command('scan <repo>')
@@ -75,7 +150,12 @@ program
   .option('-l, --limit <number>', 'Maximum open PRs to analyze', '40')
   .option('-o, --output <path>', 'Save Markdown report to file')
   .option('--json <path>', 'Save raw JSON audit data to file')
-  .action((repo: string, opts: { limit: string; output?: string; json?: string }) => {
+  .option('--comment', 'Pro: post/update one ranked triage comment on each contested issue')
+  .option('--label', 'Pro: label PRs prguard: top-contender / needs-scrutiny / likely-slop')
+  .option('--webhook <url>', 'Pro: send a summary to a Slack or Discord incoming webhook')
+  .option('--license-key <key>', 'Pro license key (or set PRGUARD_LICENSE_KEY)')
+  .option('--dry-run', 'Print Pro actions instead of performing them')
+  .action(async (repo: string, opts: ScanOpts) => {
     const limit = parseInt(opts.limit, 10) || 40;
     console.log(`🔍 Scanning up to ${limit} open PRs in ${repo}...`);
     const prs = fetchOpenPRs(repo, limit);
@@ -93,6 +173,17 @@ program
       fs.writeFileSync(opts.json, JSON.stringify(report, null, 2), 'utf-8');
       console.log(`✅ JSON report written to ${opts.json}`);
     }
+
+    process.exitCode = await runProActions(repo, report, opts);
   });
 
-program.parse();
+program
+  .command('license <key>')
+  .description('Check whether a PRGuard Pro license key is active')
+  .action(async (key: string) => {
+    const res = await validateLicense(key);
+    console.log(res.valid ? `✅ ${res.reason}` : `❌ ${res.reason}`);
+    process.exitCode = res.valid ? 0 : 1;
+  });
+
+program.parseAsync();
